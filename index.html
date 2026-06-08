@@ -1,0 +1,653 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>수능 단어장</title>
+
+<!-- PWA: 홈 화면 앱 설치 + 오프라인 -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#0f0f13">
+
+<!-- iOS 사파리: 홈 화면 추가 시 전체화면 앱처럼 -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="단어장">
+<meta name="mobile-web-app-capable" content="yes">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+
+<!-- 폰트: Pretendard (CDN, 첫 접속 시 서비스워커가 캐시 → 이후 오프라인) -->
+<link rel="stylesheet" as="style" crossorigin
+      href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/variable/pretendardvariable.min.css">
+<style>
+  :root {
+    --bg: #0f0f13;
+    --card-bg: #1a1a24;
+    --border: #2a2a3a;
+    --accent: #6c63ff;
+    --accent2: #ff6584;
+    --text: #e8e8f0;
+    --subtext: #8888aa;
+    --easy: #4caf50;
+    --hard: #f44336;
+    --radius: 16px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Pretendard Variable', Pretendard, -apple-system, BlinkMacSystemFont,
+                 system-ui, 'Apple SD Gothic Neo', 'Segoe UI', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    min-height: 100dvh;            /* 모바일 주소창 높이 변화 대응 */
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 24px 16px;
+    /* iOS 노치/홈바 안전영역 확보 */
+    padding-top: calc(24px + env(safe-area-inset-top));
+    padding-bottom: calc(24px + env(safe-area-inset-bottom));
+  }
+
+  /* Header */
+  header {
+    width: 100%;
+    max-width: 600px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 32px;
+  }
+  h1 { font-size: 1.1rem; font-weight: 600; color: var(--subtext); letter-spacing: 0.05em; }
+  .stats { font-size: 0.85rem; color: var(--subtext); }
+  .stats span { color: var(--accent); font-weight: 700; }
+
+  /* Progress bar */
+  .progress-bar {
+    width: 100%;
+    max-width: 600px;
+    height: 4px;
+    background: var(--border);
+    border-radius: 2px;
+    margin-bottom: 16px;
+    overflow: hidden;
+  }
+  .progress-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    border-radius: 2px;
+    transition: width 0.4s ease;
+  }
+
+  /* 학습 통계 칩 */
+  .stat-row {
+    width: 100%;
+    max-width: 600px;
+    display: flex;
+    gap: 10px;
+    margin-bottom: 24px;
+  }
+  .stat-chip {
+    flex: 1;
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 12px 8px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 3px;
+  }
+  .stat-chip span {
+    font-size: 1.35rem;
+    font-weight: 700;
+    color: var(--text);
+    line-height: 1;
+  }
+  .stat-chip span.flame { color: var(--accent2); }
+  .stat-chip label {
+    font-size: 0.7rem;
+    color: var(--subtext);
+    letter-spacing: 0.02em;
+  }
+
+  /* Main card */
+  .card {
+    width: 100%;
+    max-width: 600px;
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 48px 40px 36px;
+    text-align: center;
+    cursor: pointer;
+    transition: transform 0.2s ease, border-color 0.2s, opacity 0.2s;
+    user-select: none;
+    -webkit-user-select: none;
+    touch-action: pan-y;          /* 세로 스크롤은 허용, 가로 스와이프는 직접 처리 */
+    min-height: 280px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+    position: relative;
+    overflow: hidden;
+  }
+  .card.flipped { cursor: grab; }
+
+  /* 카드 등장 애니메이션 */
+  @keyframes cardIn {
+    from { opacity: 0; transform: translateY(14px) scale(0.985); }
+    to   { opacity: 1; transform: translateY(0) scale(1); }
+  }
+  .card.card-enter { animation: cardIn 0.3s cubic-bezier(.2,.7,.3,1); }
+
+  /* 카드 영역을 남는 세로 공간 중앙에 배치 */
+  #app {
+    flex: 1 1 auto;
+    justify-content: center;
+  }
+
+  /* 스와이프 힌트 배지 */
+  .swipe-hint {
+    position: absolute;
+    top: 22px;
+    padding: 6px 18px;
+    border-radius: 12px;
+    font-weight: 800;
+    font-size: 1.05rem;
+    border: 3px solid;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.1s;
+  }
+  .swipe-hint-yes { right: 24px; color: var(--easy); border-color: var(--easy); transform: rotate(14deg); }
+  .swipe-hint-no  { left: 24px;  color: var(--hard); border-color: var(--hard); transform: rotate(-14deg); }
+
+  .word-label {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.12em;
+    color: var(--subtext);
+  }
+  .word {
+    font-size: 2.4rem;
+    font-weight: 700;
+    color: var(--text);
+    letter-spacing: -0.02em;
+  }
+  .meaning {
+    font-size: 1.25rem;
+    color: var(--accent);
+    font-weight: 500;
+    opacity: 0;
+    transition: opacity 0.25s ease;
+    min-height: 1.8em;
+  }
+  .meaning.visible { opacity: 1; }
+
+  .hint {
+    font-size: 0.8rem;
+    color: var(--subtext);
+    margin-top: 8px;
+  }
+  .card.flipped .hint { display: none; }
+
+  /* Action buttons */
+  .actions {
+    width: 100%;
+    max-width: 600px;
+    display: flex;
+    gap: 12px;
+    margin-top: 16px;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.25s ease;
+  }
+  .actions.visible {
+    opacity: 1;
+    pointer-events: auto;
+  }
+  .btn {
+    flex: 1;
+    padding: 14px;
+    border: none;
+    border-radius: 12px;
+    font-size: 0.95rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: transform 0.1s, opacity 0.1s;
+  }
+  .btn:active { transform: scale(0.97); }
+  .btn-easy { background: var(--easy); color: white; }
+  .btn-hard { background: var(--hard); color: white; }
+  .btn-easy:hover { opacity: 0.9; }
+  .btn-hard:hover { opacity: 0.9; }
+
+  /* Related words */
+  .related-section {
+    width: 100%;
+    max-width: 600px;
+    margin-top: 28px;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+  }
+  .related-section.visible { opacity: 1; }
+  .related-label {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--subtext);
+    margin-bottom: 12px;
+  }
+  .related-words {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .related-chip {
+    background: var(--card-bg);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 6px 14px;
+    font-size: 0.85rem;
+    color: var(--subtext);
+    cursor: pointer;
+    transition: border-color 0.15s, color 0.15s;
+  }
+  .related-chip:hover {
+    border-color: var(--accent);
+    color: var(--text);
+  }
+
+  /* Mode selector */
+  .mode-bar {
+    width: 100%;
+    max-width: 600px;
+    display: flex;
+    gap: 8px;
+    margin-bottom: 20px;
+  }
+  .mode-btn {
+    padding: 7px 16px;
+    border-radius: 20px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--subtext);
+    font-size: 0.82rem;
+    cursor: pointer;
+    transition: all 0.15s;
+  }
+  .mode-btn.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: white;
+  }
+
+  /* Search */
+  .search-bar {
+    width: 100%;
+    max-width: 600px;
+    margin-bottom: 16px;
+    position: relative;
+  }
+  .search-bar input {
+    width: 100%;
+    padding: 10px 16px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: var(--card-bg);
+    color: var(--text);
+    font-size: 0.9rem;
+    outline: none;
+    transition: border-color 0.2s;
+  }
+  .search-bar input:focus { border-color: var(--accent); }
+  .search-bar input::placeholder { color: var(--subtext); }
+
+  /* Loading */
+  .loading {
+    color: var(--subtext);
+    font-size: 0.9rem;
+    margin-top: 80px;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>수능 단어장</h1>
+  <div class="stats"><span id="stat-learned">0</span> / <span id="stat-total">0</span> 단어</div>
+</header>
+
+<div class="progress-bar">
+  <div class="progress-fill" id="progress-fill" style="width:0%"></div>
+</div>
+
+<div class="stat-row">
+  <div class="stat-chip"><span id="stat-today">0</span><label>오늘 학습</label></div>
+  <div class="stat-chip"><span id="stat-streak" class="flame">0</span><label>연속일</label></div>
+  <div class="stat-chip"><span id="stat-accuracy">–</span><label>정답률</label></div>
+</div>
+
+<div class="mode-bar">
+  <button class="mode-btn active" onclick="setMode('random')" id="mode-random">무작위</button>
+  <button class="mode-btn" onclick="setMode('neighbor')" id="mode-neighbor">의미 탐색</button>
+  <button class="mode-btn" onclick="setMode('hard')" id="mode-hard">어려운 단어</button>
+</div>
+
+<div class="search-bar">
+  <input type="text" id="search-input" placeholder="단어 검색..." oninput="onSearch(this.value)">
+</div>
+
+<div class="loading" id="loading">데이터 로딩 중...</div>
+
+<div id="app" style="display:none; width:100%; flex-direction:column; align-items:center;">
+
+  <div class="card" id="card">
+    <div class="swipe-hint swipe-hint-yes" id="hint-yes">알았어요</div>
+    <div class="swipe-hint swipe-hint-no" id="hint-no">다시</div>
+    <div class="word-label">영어</div>
+    <div class="word" id="word-display">—</div>
+    <div class="meaning" id="meaning-display"></div>
+    <div class="hint">탭하여 뜻 보기 · 좌우로 밀어 평가</div>
+  </div>
+
+  <div class="actions" id="actions">
+    <button class="btn btn-hard" onclick="markCard(false)">다시 볼게요</button>
+    <button class="btn btn-easy" onclick="markCard(true)">알았어요!</button>
+  </div>
+
+  <div class="related-section" id="related-section">
+    <div class="related-label">연관 단어</div>
+    <div class="related-words" id="related-words"></div>
+  </div>
+
+</div>
+
+<script src="vocab_data.js"></script>
+<script>
+let vocab = null;        // { words, meanings, neighbors }
+let scores = {};         // word → { seen: n, correct: n }
+let activity = {};       // 'YYYY-MM-DD' → 그날 평가한 횟수
+let currentIdx = -1;
+let flipped = false;
+let mode = 'random';
+
+// ── Data loading ──────────────────────────────────────────────────────────
+function loadData() {
+  // 데이터는 vocab_data.js에서 window.VOCAB_DATA로 주입됨 (file:// 오프라인 지원)
+  if (!window.VOCAB_DATA) {
+    document.getElementById('loading').textContent =
+      'vocab_data.js를 불러오지 못했어요. index.html과 같은 폴더에 있는지 확인하세요.';
+    return;
+  }
+  vocab = window.VOCAB_DATA;
+  // Load scores from localStorage
+  const saved = localStorage.getItem('vocab_scores');
+  if (saved) scores = JSON.parse(saved);
+  const savedAct = localStorage.getItem('vocab_activity');
+  if (savedAct) activity = JSON.parse(savedAct);
+  document.getElementById('stat-total').textContent = vocab.words.length;
+  document.getElementById('loading').style.display = 'none';
+  const app = document.getElementById('app');
+  app.style.display = 'flex';
+  nextCard();
+}
+
+function saveScores() {
+  localStorage.setItem('vocab_scores', JSON.stringify(scores));
+}
+
+// ── 학습 활동(오늘/연속/정답률) ──────────────────────────────────────────────
+function dateKey(d) {
+  return d.getFullYear() + '-' +
+    String(d.getMonth() + 1).padStart(2, '0') + '-' +
+    String(d.getDate()).padStart(2, '0');
+}
+function recordActivity() {
+  const k = dateKey(new Date());
+  activity[k] = (activity[k] || 0) + 1;
+  localStorage.setItem('vocab_activity', JSON.stringify(activity));
+}
+function computeStreak() {
+  let streak = 0;
+  const base = new Date();
+  for (let i = 0; i < 3650; i++) {
+    const day = new Date(base);
+    day.setDate(base.getDate() - i);
+    if (activity[dateKey(day)] > 0) {
+      streak++;
+    } else if (i > 0) {
+      break;              // 오늘(i=0)은 아직 학습 전이어도 연속 유지, 그 이전이 비면 종료
+    }
+  }
+  return streak;
+}
+function computeAccuracy() {
+  let seen = 0, correct = 0;
+  for (const s of Object.values(scores)) { seen += s.seen; correct += s.correct; }
+  return seen ? Math.round(correct / seen * 100) : null;
+}
+
+// ── Card logic ────────────────────────────────────────────────────────────
+function pickIndex() {
+  const n = vocab.words.length;
+  if (mode === 'random') {
+    return Math.floor(Math.random() * n);
+  }
+  if (mode === 'neighbor' && currentIdx >= 0) {
+    // Pick a random neighbor, weighted toward unvisited ones
+    const neighbors = vocab.neighbors[currentIdx];
+    const unvisited = neighbors.filter(i => !scores[vocab.words[i]]);
+    if (unvisited.length > 0)
+      return unvisited[Math.floor(Math.random() * unvisited.length)];
+    return neighbors[Math.floor(Math.random() * neighbors.length)];
+  }
+  if (mode === 'hard') {
+    // Words with lowest correct ratio, seen at least once
+    const seen = Object.entries(scores).filter(([w, s]) => s.seen > 0);
+    if (seen.length === 0) return Math.floor(Math.random() * n);
+    seen.sort(([, a], [, b]) => (a.correct / a.seen) - (b.correct / b.seen));
+    const pool = seen.slice(0, Math.min(50, seen.length));
+    const [word] = pool[Math.floor(Math.random() * pool.length)];
+    return vocab.words.indexOf(word);
+  }
+  return Math.floor(Math.random() * n);
+}
+
+function showCard(idx) {
+  currentIdx = idx;
+  flipped = false;
+  const word = vocab.words[idx];
+  const meaningEl = document.getElementById('meaning-display');
+
+  // 트랜지션을 잠깐 꺼서 이전 뜻이 페이드아웃되며 깜빡이는 현상 방지
+  meaningEl.style.transition = 'none';
+  meaningEl.classList.remove('visible');
+  document.getElementById('actions').classList.remove('visible');
+  document.getElementById('related-section').classList.remove('visible');
+  document.getElementById('card').classList.remove('flipped');
+
+  document.getElementById('word-display').textContent = word;
+  meaningEl.textContent = vocab.meanings[idx];
+
+  // 강제 reflow 후 트랜지션 복구 (다음 flip 때 부드럽게 나타나도록)
+  void meaningEl.offsetWidth;
+  meaningEl.style.transition = '';
+
+  // 카드 등장 애니메이션 재생
+  const card = document.getElementById('card');
+  card.classList.remove('card-enter');
+  void card.offsetWidth;
+  card.classList.add('card-enter');
+
+  updateStats();
+}
+
+function nextCard() {
+  const idx = pickIndex();
+  showCard(idx);
+}
+
+function flipCard() {
+  if (flipped) return;
+  flipped = true;
+  document.getElementById('meaning-display').classList.add('visible');
+  document.getElementById('actions').classList.add('visible');
+  document.getElementById('card').classList.add('flipped');
+  showRelated();
+
+  // Mark as seen
+  const word = vocab.words[currentIdx];
+  if (!scores[word]) scores[word] = { seen: 0, correct: 0 };
+  scores[word].seen++;
+  saveScores();
+}
+
+function markCard(isCorrect) {
+  const word = vocab.words[currentIdx];
+  if (!scores[word]) scores[word] = { seen: 0, correct: 0 };
+  if (isCorrect) scores[word].correct++;
+  saveScores();
+  recordActivity();      // 오늘 학습 수 + 연속일 갱신
+  updateStats();
+  nextCard();
+}
+
+function showRelated() {
+  const neighbors = vocab.neighbors[currentIdx].slice(0, 8);
+  const container = document.getElementById('related-words');
+  container.innerHTML = neighbors.map(i =>
+    `<span class="related-chip" onclick="jumpTo(${i})">${vocab.words[i]}</span>`
+  ).join('');
+  document.getElementById('related-section').classList.add('visible');
+}
+
+function jumpTo(idx) {
+  showCard(idx);
+}
+
+function updateStats() {
+  const learned = Object.values(scores).filter(s => s.correct > 0).length;
+  document.getElementById('stat-learned').textContent = learned;
+  const pct = (learned / vocab.words.length * 100).toFixed(1);
+  document.getElementById('progress-fill').style.width = pct + '%';
+
+  document.getElementById('stat-today').textContent = activity[dateKey(new Date())] || 0;
+  document.getElementById('stat-streak').textContent = computeStreak();
+  const acc = computeAccuracy();
+  document.getElementById('stat-accuracy').textContent = acc === null ? '–' : acc + '%';
+}
+
+// ── Mode ──────────────────────────────────────────────────────────────────
+function setMode(m) {
+  mode = m;
+  document.querySelectorAll('.mode-btn').forEach(b => b.classList.remove('active'));
+  document.getElementById('mode-' + m).classList.add('active');
+  nextCard();
+}
+
+// ── Search ────────────────────────────────────────────────────────────────
+function onSearch(q) {
+  if (!q.trim()) return;
+  q = q.trim().toLowerCase();
+  const idx = vocab.words.findIndex(w => w.toLowerCase().startsWith(q));
+  if (idx >= 0) showCard(idx);
+}
+
+// ── 터치/포인터 스와이프 ────────────────────────────────────────────────────
+const SWIPE_THRESHOLD = 90;   // 평가 확정에 필요한 가로 이동 거리(px)
+const TAP_MAX = 10;           // 이 이하 움직임은 탭으로 간주
+let pStartX = 0, pStartY = 0, pDragging = false, pId = null, pIsSwipe = false;
+
+function setHint(side, strength) {
+  const yes = document.getElementById('hint-yes');
+  const no = document.getElementById('hint-no');
+  yes.style.opacity = side === 'yes' ? strength : 0;
+  no.style.opacity = side === 'no' ? strength : 0;
+}
+
+function initSwipe() {
+  const card = document.getElementById('card');
+
+  card.addEventListener('pointerdown', (e) => {
+    if (e.button && e.button !== 0) return;
+    pStartX = e.clientX; pStartY = e.clientY;
+    pDragging = true; pIsSwipe = false; pId = e.pointerId;
+    card.style.transition = 'none';
+    card.setPointerCapture(e.pointerId);
+  });
+
+  card.addEventListener('pointermove', (e) => {
+    if (!pDragging || e.pointerId !== pId) return;
+    const dx = e.clientX - pStartX;
+    const dy = e.clientY - pStartY;
+    // 뒤집힌 상태 + 가로 움직임이 우세할 때만 스와이프로 처리
+    if (flipped && Math.abs(dx) > Math.abs(dy) && Math.abs(dx) > TAP_MAX) {
+      pIsSwipe = true;
+      card.style.transform = `translateX(${dx}px) rotate(${dx * 0.04}deg)`;
+      if (dx > 0) setHint('yes', Math.min(1, dx / SWIPE_THRESHOLD));
+      else setHint('no', Math.min(1, -dx / SWIPE_THRESHOLD));
+    }
+  });
+
+  card.addEventListener('pointerup', (e) => {
+    if (!pDragging || e.pointerId !== pId) return;
+    pDragging = false;
+    const dx = e.clientX - pStartX;
+    const dy = e.clientY - pStartY;
+    const dist = Math.hypot(dx, dy);
+    card.style.transition = 'transform 0.2s ease, border-color 0.2s, opacity 0.2s';
+
+    // 탭 → 뒤집기
+    if (dist < TAP_MAX) {
+      card.style.transform = '';
+      setHint(null, 0);
+      if (!flipped) flipCard();
+      return;
+    }
+
+    // 스와이프 확정
+    if (flipped && pIsSwipe && Math.abs(dx) > SWIPE_THRESHOLD) {
+      const correct = dx > 0;
+      card.style.transform = `translateX(${correct ? 600 : -600}px) rotate(${correct ? 24 : -24}deg)`;
+      card.style.opacity = '0';
+      setTimeout(() => {
+        card.style.transition = 'none';
+        card.style.transform = '';
+        card.style.opacity = '';
+        setHint(null, 0);
+        void card.offsetWidth;
+        card.style.transition = 'transform 0.2s ease, border-color 0.2s, opacity 0.2s';
+        markCard(correct);
+      }, 200);
+    } else {
+      // 임계값 미달 → 제자리로
+      card.style.transform = '';
+      setHint(null, 0);
+    }
+  });
+
+  card.addEventListener('pointercancel', () => {
+    pDragging = false;
+    card.style.transition = 'transform 0.2s ease, border-color 0.2s, opacity 0.2s';
+    card.style.transform = '';
+    setHint(null, 0);
+  });
+}
+
+// ── Boot ──────────────────────────────────────────────────────────────────
+initSwipe();
+loadData();
+
+// ── PWA 서비스워커 등록 (HTTPS/localhost에서만 동작, file://에선 자동 무시) ──
+if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  });
+}
+</script>
+</body>
+</html>
