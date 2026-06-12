@@ -286,6 +286,34 @@
     color: white;
   }
   #mode-wrong.active { background: var(--hard); border-color: var(--hard); }
+  #mode-review.active { background: var(--easy); border-color: var(--easy); }
+
+  /* 4지선다 퀴즈 */
+  .quiz-choices {
+    width: 100%;
+    max-width: 600px;
+    display: none;
+    flex-direction: column;
+    gap: 10px;
+    margin-top: 16px;
+  }
+  .quiz-choices.visible { display: flex; }
+  .quiz-btn {
+    padding: 15px 18px;
+    border-radius: 12px;
+    border: 1px solid var(--border);
+    background: var(--card-bg);
+    color: var(--text);
+    font-size: 1rem;
+    font-weight: 500;
+    cursor: pointer;
+    text-align: left;
+    transition: border-color 0.15s, background 0.15s, transform 0.1s;
+  }
+  .quiz-btn:active { transform: scale(0.99); }
+  .quiz-btn.correct { border-color: var(--easy); background: rgba(76,175,80,0.16); }
+  .quiz-btn.wrong   { border-color: var(--hard); background: rgba(244,67,54,0.16); }
+  .quiz-btn:disabled { pointer-events: none; opacity: 1; }
 
   /* 오답 노트 열기 버튼 */
   .notebook-bar {
@@ -432,6 +460,8 @@
   <button class="mode-btn" onclick="setMode('neighbor')" id="mode-neighbor">의미 탐색</button>
   <button class="mode-btn" onclick="setMode('hard')" id="mode-hard">어려운 단어</button>
   <button class="mode-btn" onclick="setMode('wrong')" id="mode-wrong">오답 학습</button>
+  <button class="mode-btn" onclick="setMode('review')" id="mode-review">복습 <span id="due-count">0</span></button>
+  <button class="mode-btn" onclick="setMode('quiz')" id="mode-quiz">퀴즈</button>
 </div>
 
 <div class="notebook-bar">
@@ -459,6 +489,8 @@
     <button class="btn btn-hard" onclick="markCard(false)">다시 볼게요</button>
     <button class="btn btn-easy" onclick="markCard(true)">알았어요!</button>
   </div>
+
+  <div class="quiz-choices" id="quiz-choices"></div>
 
   <div class="related-section" id="related-section">
     <div class="related-label">연관 단어</div>
@@ -544,13 +576,50 @@ function computeAccuracy() {
 }
 
 // ── 오답 노트 ────────────────────────────────────────────────────────────────
-// 점수 객체 기본값 보장 (구버전 데이터엔 wrong/lastWrong 없을 수 있음)
+// 점수 객체 기본값 보장 (구버전 데이터엔 wrong/lastWrong/box/due 없을 수 있음)
 function ensureScore(word) {
   let s = scores[word];
-  if (!s) { s = scores[word] = { seen: 0, correct: 0, wrong: 0, lastWrong: false }; }
+  if (!s) { s = scores[word] = { seen: 0, correct: 0, wrong: 0, lastWrong: false, box: 0, due: 0 }; }
   if (s.wrong === undefined) s.wrong = 0;
   if (s.lastWrong === undefined) s.lastWrong = false;
+  if (s.box === undefined) s.box = 0;
+  if (s.due === undefined) s.due = 0;
   return s;
+}
+
+// ── 간격 반복(SRS, Leitner) ──────────────────────────────────────────────────
+// 맞힐 때마다 상자가 올라가고 다음 복습이 1일→3일→7일→16일→35일로 멀어짐.
+// 틀리면 상자 0으로 떨어지고 즉시 복습 대상.
+const SRS_INTERVALS = [0, 1, 3, 7, 16, 35].map(d => d * 86400000);
+
+function applyResult(word, isCorrect) {
+  const s = ensureScore(word);
+  s.seen = Math.max(s.seen, 1);
+  if (isCorrect) {
+    s.correct++;
+    s.lastWrong = false;
+    s.box = Math.min(s.box + 1, 5);
+    s.due = Date.now() + SRS_INTERVALS[s.box];
+  } else {
+    s.wrong++;
+    s.lastWrong = true;
+    s.box = 0;
+    s.due = Date.now();
+  }
+  saveScores();
+  recordActivity();
+  updateStats();
+}
+
+// 복습 기한이 된 단어들의 인덱스
+function dueIndices() {
+  const now = Date.now();
+  const out = [];
+  for (let i = 0; i < vocab.words.length; i++) {
+    const s = scores[vocab.words[i]];
+    if (s && s.seen > 0 && (s.due || 0) <= now) out.push(i);
+  }
+  return out;
 }
 // 현재 오답 노트에 든 단어들의 인덱스 (마지막 평가가 오답인 단어)
 function wrongIndices() {
@@ -630,6 +699,12 @@ function showCard(idx) {
   void meaningEl.offsetWidth;
   meaningEl.style.transition = '';
 
+  // 퀴즈 모드: 선택지 렌더, 그 외엔 숨김 + 힌트 문구 전환
+  document.querySelector('.card .hint').textContent =
+    mode === 'quiz' ? '알맞은 뜻을 고르세요' : '탭하여 뜻 보기 · 좌우로 밀어 평가';
+  if (mode === 'quiz') renderQuiz(idx);
+  else document.getElementById('quiz-choices').classList.remove('visible');
+
   // 카드 등장 애니메이션 재생
   const card = document.getElementById('card');
   card.classList.remove('card-enter');
@@ -642,7 +717,13 @@ function showCard(idx) {
 function nextCard() {
   if (mode === 'wrong') {
     const list = wrongIndices();
-    if (list.length === 0) { showEmptyWrong(); return; }
+    if (list.length === 0) { showEmptyCard('오답 없음 👏'); return; }
+    showCard(list[Math.floor(Math.random() * list.length)]);
+    return;
+  }
+  if (mode === 'review') {
+    const list = dueIndices();
+    if (list.length === 0) { showEmptyCard('복습할 단어 없음 ✨'); return; }
     showCard(list[Math.floor(Math.random() * list.length)]);
     return;
   }
@@ -650,8 +731,8 @@ function nextCard() {
   showCard(idx);
 }
 
-// 오답 학습 모드인데 오답이 없을 때 카드에 안내 표시
-function showEmptyWrong() {
+// 출제할 단어가 없을 때 카드에 안내 표시 (오답/복습 모드)
+function showEmptyCard(text) {
   currentIdx = -1;
   flipped = false;
   const meaningEl = document.getElementById('meaning-display');
@@ -659,8 +740,9 @@ function showEmptyWrong() {
   meaningEl.classList.remove('visible');
   document.getElementById('actions').classList.remove('visible');
   document.getElementById('related-section').classList.remove('visible');
+  document.getElementById('quiz-choices').classList.remove('visible');
   document.getElementById('card').classList.remove('flipped');
-  document.getElementById('word-display').textContent = '오답 없음 👏';
+  document.getElementById('word-display').textContent = text;
   meaningEl.textContent = '';
   void meaningEl.offsetWidth;
   meaningEl.style.transition = '';
@@ -668,7 +750,7 @@ function showEmptyWrong() {
 }
 
 function flipCard() {
-  if (flipped || currentIdx < 0) return;
+  if (flipped || currentIdx < 0 || mode === 'quiz') return;
   flipped = true;
   document.getElementById('meaning-display').classList.add('visible');
   document.getElementById('actions').classList.add('visible');
@@ -683,17 +765,7 @@ function flipCard() {
 
 function markCard(isCorrect) {
   if (currentIdx < 0) return;
-  const s = ensureScore(vocab.words[currentIdx]);
-  if (isCorrect) {
-    s.correct++;
-    s.lastWrong = false;   // 맞히면 오답 노트에서 빠짐
-  } else {
-    s.wrong++;
-    s.lastWrong = true;    // 틀리면 오답 노트에 들어감
-  }
-  saveScores();
-  recordActivity();      // 오늘 학습 수 + 연속일 갱신
-  updateStats();
+  applyResult(vocab.words[currentIdx], isCorrect);   // 점수 + 오답노트 + SRS
   nextCard();
 }
 
@@ -708,6 +780,52 @@ function showRelated() {
 
 function jumpTo(idx) {
   showCard(idx);
+}
+
+// ── 4지선다 퀴즈 ─────────────────────────────────────────────────────────────
+// 오답 보기를 임베딩 KNN 이웃에서 뽑음: 의미가 비슷한 단어일수록 헷갈리는 보기가 됨
+let quizLock = false;
+
+function renderQuiz(idx) {
+  quizLock = false;
+  const correct = vocab.meanings[idx];
+  const pool = [];
+  const used = new Set([correct]);
+  // 1순위: KNN 이웃의 뜻 (가까운 순서를 섞어서)
+  const nbrs = [...vocab.neighbors[idx]].sort(() => Math.random() - 0.5);
+  for (const n of nbrs) {
+    const m = vocab.meanings[n];
+    if (!used.has(m)) { used.add(m); pool.push(m); }
+    if (pool.length >= 3) break;
+  }
+  // 부족하면 무작위 단어로 채움
+  while (pool.length < 3) {
+    const m = vocab.meanings[Math.floor(Math.random() * vocab.words.length)];
+    if (!used.has(m)) { used.add(m); pool.push(m); }
+  }
+  const choices = [correct, ...pool].sort(() => Math.random() - 0.5);
+  const cont = document.getElementById('quiz-choices');
+  cont.innerHTML = choices.map(c =>
+    `<button class="quiz-btn" onclick="answerQuiz(this)">${c}</button>`
+  ).join('');
+  cont.dataset.correct = correct;
+  cont.classList.add('visible');
+}
+
+function answerQuiz(btn) {
+  if (quizLock || currentIdx < 0) return;
+  quizLock = true;
+  const cont = document.getElementById('quiz-choices');
+  const correct = cont.dataset.correct;
+  const isCorrect = btn.textContent === correct;
+  // 색 피드백: 정답은 초록, 잘못 고른 건 빨강
+  for (const b of cont.querySelectorAll('.quiz-btn')) {
+    b.disabled = true;
+    if (b.textContent === correct) b.classList.add('correct');
+  }
+  if (!isCorrect) btn.classList.add('wrong');
+  applyResult(vocab.words[currentIdx], isCorrect);
+  setTimeout(nextCard, isCorrect ? 600 : 1200);   // 틀리면 정답 볼 시간을 더 줌
 }
 
 function updateStats() {
@@ -725,6 +843,9 @@ function updateStats() {
   const wc = wrongIndices().length;
   document.getElementById('wrong-count').textContent = wc;
   document.getElementById('wrong-count2').textContent = wc;
+
+  // 복습 기한 도래 개수
+  document.getElementById('due-count').textContent = dueIndices().length;
 }
 
 // ── Mode ──────────────────────────────────────────────────────────────────
