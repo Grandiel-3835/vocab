@@ -783,25 +783,48 @@ function jumpTo(idx) {
 }
 
 // ── 4지선다 퀴즈 ─────────────────────────────────────────────────────────────
-// 오답 보기를 임베딩 KNN 이웃에서 뽑음: 의미가 비슷한 단어일수록 헷갈리는 보기가 됨
+// 오답 보기를 임베딩 KNN 이웃에서 뽑음: 의미가 비슷한 단어일수록 헷갈리는 보기가 됨.
+// 단, 같은 어근(compare/comparison)이나 정답과 같은 형태소(비교~)를 가진 보기는
+// 품사 맞히기 문제가 돼버리므로 걸러냄.
 let quizLock = false;
+
+// 영어: 어근이 같은 단어인가 (포함 관계이거나 앞 4글자 이상 공유)
+function sharesRoot(a, b) {
+  a = a.toLowerCase().replace(/[^a-z]/g, '');
+  b = b.toLowerCase().replace(/[^a-z]/g, '');
+  if (a.includes(b) || b.includes(a)) return true;
+  let p = 0;
+  while (p < a.length && p < b.length && a[p] === b[p]) p++;
+  return p >= 4;
+}
+// 한국어: 두 뜻이 같은 형태소로 시작하는 토큰을 공유하는가 (비교함 vs 비교하여)
+function meaningOverlaps(m1, m2) {
+  const prefixes = (m) => new Set((m.match(/[가-힣]{2,}/g) || []).map(t => t.slice(0, 2)));
+  const p1 = prefixes(m1);
+  for (const p of prefixes(m2)) if (p1.has(p)) return true;
+  return false;
+}
 
 function renderQuiz(idx) {
   quizLock = false;
+  const word = vocab.words[idx];
   const correct = vocab.meanings[idx];
   const pool = [];
   const used = new Set([correct]);
-  // 1순위: KNN 이웃의 뜻 (가까운 순서를 섞어서)
+  const ok = (w, m) => !used.has(m) && !sharesRoot(word, w) && !meaningOverlaps(correct, m);
+  // 1순위: KNN 이웃의 뜻 (가까운 순서를 섞어서) — 같은 어근/뜻 겹침 제외
   const nbrs = [...vocab.neighbors[idx]].sort(() => Math.random() - 0.5);
   for (const n of nbrs) {
     const m = vocab.meanings[n];
-    if (!used.has(m)) { used.add(m); pool.push(m); }
+    if (ok(vocab.words[n], m)) { used.add(m); pool.push(m); }
     if (pool.length >= 3) break;
   }
-  // 부족하면 무작위 단어로 채움
-  while (pool.length < 3) {
-    const m = vocab.meanings[Math.floor(Math.random() * vocab.words.length)];
-    if (!used.has(m)) { used.add(m); pool.push(m); }
+  // 부족하면 무작위 단어로 채움 (역시 필터 적용)
+  let guard = 0;
+  while (pool.length < 3 && guard++ < 200) {
+    const r = Math.floor(Math.random() * vocab.words.length);
+    const m = vocab.meanings[r];
+    if (ok(vocab.words[r], m)) { used.add(m); pool.push(m); }
   }
   const choices = [correct, ...pool].sort(() => Math.random() - 0.5);
   const cont = document.getElementById('quiz-choices');
