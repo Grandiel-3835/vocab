@@ -812,9 +812,11 @@ function renderQuiz(idx) {
   const pool = [];
   const used = new Set([correct]);
   const ok = (w, m) => !used.has(m) && !sharesRoot(word, w) && !meaningOverlaps(correct, m);
-  // 1순위: KNN 이웃의 뜻 (가까운 순서를 섞어서) — 같은 어근/뜻 겹침 제외
-  const nbrs = [...vocab.neighbors[idx]].sort(() => Math.random() - 0.5);
-  for (const n of nbrs) {
+  // 1순위: 중간 거리 오답 풀(quiz_pool) — 최근접(유의어)을 건너뛴 '관련은 있지만 다른 뜻' 단어.
+  // quiz_pool이 없는 옛 데이터는 neighbors로 폴백.
+  const src = (vocab.quiz_pool && vocab.quiz_pool[idx]) ? vocab.quiz_pool[idx] : vocab.neighbors[idx];
+  const cand = [...src].sort(() => Math.random() - 0.5);
+  for (const n of cand) {
     const m = vocab.meanings[n];
     if (ok(vocab.words[n], m)) { used.add(m); pool.push(m); }
     if (pool.length >= 3) break;

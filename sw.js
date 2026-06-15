@@ -1,6 +1,6 @@
 // 수능 단어장 서비스워커 — 완전 오프라인 캐싱
 // 데이터/코드를 바꾸면 아래 CACHE 버전을 올려야 새 버전이 반영됨
-const CACHE = 'vocab-v4';
+const CACHE = 'vocab-v5';
 
 const ASSETS = [
   '.',
